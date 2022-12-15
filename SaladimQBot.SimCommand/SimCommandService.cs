@@ -1,6 +1,7 @@
 ﻿using System.Drawing;
 using System.Numerics;
 using System.Reflection;
+using Microsoft.Extensions.DependencyInjection;
 using SaladimQBot.Core;
 using SaladimQBot.SimCommand.Parsers;
 
@@ -11,6 +12,7 @@ public sealed class SimCommandService
     public static readonly Type StringType = typeof(string);
 
     private readonly List<MethodBasedCommand> commands;
+    private readonly IServiceCollection? serviceCollection;
 
     public IClient Client { get; }
 
@@ -23,10 +25,11 @@ public sealed class SimCommandService
     /// </summary>
     /// <param name="client">client实例</param>
     /// <param name="rootCommandPrefix">指令的前缀, 不需要前缀时请显式指定为空字符串</param>
-    public SimCommandService(IClient client, string rootCommandPrefix)
+    public SimCommandService(SimCommandServiceConfig config, IClient client, IServiceCollection? serviceCollection)
     {
         this.Client = client;
-        this.RootCommandPrefix = rootCommandPrefix;
+        this.RootCommandPrefix = config.RootPrefix;
+        this.serviceCollection = serviceCollection;
         commands = new();
         CommandParamParsers = new()
         {
@@ -45,9 +48,16 @@ public sealed class SimCommandService
             [typeof(Vector3)] = s => CommonTypeParsers.Vector3(s),
             [typeof(Color)] = s => CommonTypeParsers.Color(s),
         };
+        foreach (var type in config.ModulesAssembly.DefinedTypes)
+        {
+            if (type.GetCustomAttribute<CommandModuleAttribute>() is not null)
+            {
+                this.AddModule(type);
+            }
+        }
     }
 
-    public void AddModule(Type moduleClassType)
+    private void AddModule(Type moduleClassType)
     {
         var cmdToAdd =
             from methodInfo in moduleClassType.GetMethods()
@@ -55,6 +65,7 @@ public sealed class SimCommandService
             where attr is not null
             select new MethodBasedCommand(attr.Name, methodInfo);
         commands.AddRange(cmdToAdd);
+        serviceCollection?.AddSingleton(moduleClassType);
     }
 
     /// <summary>
@@ -68,22 +79,40 @@ public sealed class SimCommandService
             .Where(node =>
             {
                 var text = node.Text;
+#if !NETSTANDARD2_0
                 var trimedText = text.AsSpan().Trim();
                 if (trimedText.StartsWith(RootCommandPrefix.AsSpan()))
                     return true;
+#else
+                var trimedText = text.Trim();
+                if (trimedText.StartsWith(RootCommandPrefix))
+                    return true;
+#endif
                 return false;
             })
             .Select(node => node.Text.Trim());
         foreach (var matchedNodeText in matchedNodeTexts)
         {
+#if !NETSTANDARD2_0
             var cmdTextWithoutRootPrefix = matchedNodeText.AsSpan(RootCommandPrefix.Length);
+#else
+            var cmdTextWithoutRootPrefix = matchedNodeText.Substring(RootCommandPrefix.Length);
+#endif
             foreach (var cmd in commands)
             {
+#if !NETSTANDARD2_0
                 if (cmdTextWithoutRootPrefix.StartsWith(cmd.Name.AsSpan()))
+#else
+                if (cmdTextWithoutRootPrefix.StartsWith(cmd.Name))
+#endif
                 {
                     //现在我们有一个文本以我们想要的前缀开头
                     //但是可能后面还有其他字符,我们再截取然后看看开头是不是空格
+#if !NETSTANDARD2_0
                     var cmdTextWithoutPrefix = cmdTextWithoutRootPrefix.Slice(cmd.Name.Length);
+#else
+                    var cmdTextWithoutPrefix = cmdTextWithoutRootPrefix.Substring(cmd.Name.Length);
+#endif
                     if (cmdTextWithoutPrefix.Length != 0)
                     {
                         if (cmdTextWithoutPrefix[0] == ' ')
@@ -92,7 +121,11 @@ public sealed class SimCommandService
                             //s/add 1 2, 此时cmdTextWithoutRootPrefix就是"add 1 2", 并且已经找到了想要的add指令
                             //add前缀去除, 得到形如" 1 2"的文本
                             //然后移除前导空格, 得到参数字符串
+#if !NETSTANDARD2_0
                             var paramString = cmdTextWithoutPrefix.Slice(1);
+#else
+                            var paramString = cmdTextWithoutPrefix.Substring(1);
+#endif
                             //此时形如"1 2"
                             //TODO 解析带引号的参数
                             var cmdParams = paramString.ToString().Split(' ');

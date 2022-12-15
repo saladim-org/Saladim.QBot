@@ -1,4 +1,7 @@
-﻿Console.WriteLine("你好f34f34f34f3qwq".AsSpan().ToString());
+﻿IServiceProvider
+
+
+//Console.WriteLine("你好f34f34f34f3qwq".AsSpan().ToString());
 
 /*Delegate a = () => Console.WriteLine("114514");
 a.DynamicInvoke();*/

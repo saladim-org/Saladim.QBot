@@ -18,7 +18,6 @@ public class Program
         client.OnLog += Console.WriteLine;
         client.OnGroupMessageReceived += Client_OnGroupMessageReceived;
         simCmd = new(client, "");
-        simCmd.AddModule(typeof(SampleModule));
         await client.StartAsync();
         Console.ReadLine();
         await client.StopAsync();

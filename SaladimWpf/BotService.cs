@@ -10,31 +10,36 @@ using SaladimQBot.GoCqHttp;
 using SaladimQBot.Shared;
 using System.Drawing;
 using System.Net;
+using SaladimQBot.SimCommand;
+using SaladimWpf.Services;
+using SaladimQBot.Core;
 
 namespace SaladimWpf;
 
-public class BotInstance
+public class BotService
 {
-    protected HttpClient httpClient;
     protected CqClient cqClient;
     protected Logger logger;
-    protected HttpListener httpListener;
+
     protected Random random;
+    protected SimCommandService simCmdService;
+    protected HttpService httpService;
+    protected HomoService homoService;
 
     public event Action<string>? OnClientLog;
 
     public event Action<string>? OnLog;
 
+    public CqClient Client { get => cqClient; }
+
     public bool OpenGuessNumberBot { get; set; }
 
     public int GuessNumberBotDelay { get; set; }
 
-    public BotInstance(string address)
+    public BotService(BotServiceConfig config, SimCommandService simCmdService, HttpService httpService, HomoService homoService)
     {
-        cqClient = new CqWebSocketClient(address, LogLevel.Trace);
+        cqClient = new CqWebSocketClient(config.Address, LogLevel.Trace);
         cqClient.OnLog += s => OnClientLog?.Invoke(s);
-        httpClient = new HttpClient();
-        httpClient.DefaultRequestHeaders.Add("User-Agent", "Saladim.QBot external value fetcher");
         logger = new LoggerBuilder()
             .WithLevelLimit(LogLevel.Trace)
             .WithAction(s => OnLog?.Invoke(s))
@@ -42,61 +47,11 @@ public class BotInstance
 
         cqClient.OnMessageReceived += Client_OnMessageReceived;
 
-        httpListener = new();
-        httpListener.Prefixes.Add("http://127.0.0.1:5702/");
-        try
-        {
-            httpListener.Start();
-        }
-        catch
-        {
-
-        }
-        Task.Run(ListenerLoop);
-
         var dateTimeNow = DateTime.Now;
         random = new(dateTimeNow.Millisecond + dateTimeNow.Second + dateTimeNow.Day + dateTimeNow.Minute);
-    }
-
-    private void ListenerLoop()
-    {
-        while (true)
-        {
-            var context = httpListener.GetContext(); //监听http请求
-            var imgName = context.Request.QueryString["img_name"]; //获取query string
-            var fileName = $"tempImages\\{imgName}";
-            if (File.Exists(fileName))
-            {
-                using FileStream fs = new(fileName, FileMode.Open, FileAccess.Read);
-                var res = context.Response;
-                res.ContentType = "image/bmp";
-                res.StatusCode = 200;//状态码
-                CopyStream(fs, context.Response.OutputStream);//写入返回流
-                res.Close();//完成回应
-                continue;
-            }
-            else
-            {
-                //图片
-                var res = context.Response;
-                res.ContentType = "text/plain";
-                res.StatusCode = 404;
-                using StreamWriter sw = new(context.Response.OutputStream, Encoding.UTF8);
-                sw.WriteLine("图片未找到");
-                sw.Close();
-                context.Response.Close();
-                continue;
-            }
-        }
-    }
-    public static void CopyStream(Stream input, Stream output)
-    {
-        byte[] buffer = new byte[3 * SaladimQBot.Shared.Size.KiB];
-        int read;
-        while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
-        {
-            output.Write(buffer, 0, read);
-        }
+        this.simCmdService = simCmdService;
+        this.httpService = httpService;
+        this.homoService = homoService;
     }
 
     private async void Client_OnMessageReceived(Message message)
@@ -133,10 +88,7 @@ public class BotInstance
             commandStart = "/random";
             if (rawString.StartsWith(commandStart))
             {
-                Random r = new();
-                int num = r.Next(0, 100);
-                string s = $"{message.Sender.CqAt} {message.Sender.Nickname.Value},你的随机数为{num}哦~";
-                await message.MessageWindow.SendMessageAsync(s).ConfigureAwait(false);
+
             }
             #endregion
 
@@ -177,7 +129,7 @@ public class BotInstance
             commandStart = "/来点图";
             if (rawString.StartsWith(commandStart))
             {
-                string s = await httpClient.GetStringAsync("https://img.xjh.me/random_img.php?return=json").ConfigureAwait(false);
+                string s = await httpService.HttpClient.GetStringAsync("https://img.xjh.me/random_img.php?return=json").ConfigureAwait(false);
                 string imgUrl = "http:" + JsonDocument.Parse(s).RootElement.GetProperty("img").GetString();
                 MessageEntity m = new MessageEntityBuilder(cqClient)
                     .WithImage(imgUrl)
@@ -207,7 +159,7 @@ public class BotInstance
                 string url = $"https://api.bilibili.com/x/web-interface/view?{query}";
                 var d =
                     JsonSerializer.Deserialize<Models.BilibiliVideoInfoApiCallResult.Root>
-                        (await httpClient.GetStringAsync(url).ConfigureAwait(false));
+                        (await httpService.HttpClient.GetStringAsync(url).ConfigureAwait(false));
                 if (d is null)
                     return;
                 long code = d.Code;
@@ -281,6 +233,40 @@ public class BotInstance
                     await message.MessageWindow.SendMessageAsync($"选择的最终结果是...\n『{splitedString[result]}』");
                 }
             } while (false);
+
+            #endregion
+
+            #region
+
+            commandStart = "/homo ";
+            if (rawString.StartsWith(commandStart))
+            {
+                var numStr = rawString[commandStart.Length..];
+                if (double.TryParse(numStr, out var d))
+                {
+                    string rst = homoService.Homo(d);
+                    if (rst.Length <= 150)
+                    {
+                        await message.MessageWindow.SendMessageAsync($"{d} = {rst}");
+                    }
+                    else
+                    {
+                        MessageEntity b2 = new MessageEntityBuilder(cqClient)
+                            .WithText("消息长度过长, 以自动转为转发消息.")
+                            .Build();
+                        MessageEntity b = new MessageEntityBuilder(cqClient)
+                            .WithText($"{d} = {rst}")
+                            .Build();
+                        ForwardEntityBuilder f = new(cqClient);
+                        f.AddMessage(cqClient.Self, b, DateTime.Now);
+                        f.AddMessage(cqClient.Self, b2, DateTime.Now);
+                        if (message is GroupMessage gmsg)
+                        {
+                            await gmsg.Group.SendMessageAsync(f.Build());
+                        }
+                    }
+                }
+            }
 
             #endregion
 

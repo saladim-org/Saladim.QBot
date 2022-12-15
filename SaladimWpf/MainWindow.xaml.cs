@@ -1,4 +1,5 @@
 ﻿using System.Windows;
+using Microsoft.Extensions.DependencyInjection;
 using Saladim.SalLogger;
 using SaladimQBot.GoCqHttp;
 using SaladimQBot.Shared;
@@ -8,21 +9,22 @@ namespace SaladimWpf;
 public partial class MainWindow : Window
 {
     protected Logger logger;
-    protected BotInstance bot;
+    protected BotService botService;
 
     public MainWindow()
     {
         InitializeComponent();
-        App app = (Application.Current as App)!;
+        App app = App.Current;
         app.TextBoxLogging = TextBoxLogging;
         app.ScrollToEndCheckBox = ScrollToEndCheckBox;
         logger = app.Logger;
-        bot = new("ws://127.0.0.1:5000");
-        bot.OnLog += s =>
+
+        botService = App.Current.Service.GetRequiredService<BotService>();
+        botService.OnLog += s =>
         {
             logger.LogRaw(LogLevel.Info, s);
         };
-        bot.OnClientLog += s =>
+        botService.OnClientLog += s =>
         {
             logger.LogInfo("Client", s);
         };
@@ -33,7 +35,7 @@ public partial class MainWindow : Window
         e.Handled = true;
         if (int.TryParse(GuessNumBotDelayTextBox.Text, out int v))
         {
-            bot.GuessNumberBotDelay = v;
+            botService.GuessNumberBotDelay = v;
             logger.LogInfo("WpfConsole", $"更新完成! 延迟为{v}ms");
         }
         else
@@ -52,14 +54,14 @@ public partial class MainWindow : Window
     private void GuessNumBotCheckBox_Checked(object sender, RoutedEventArgs e)
     {
         e.Handled = true;
-        bot.OpenGuessNumberBot = true;
+        botService.OpenGuessNumberBot = true;
         logger.LogInfo("WpfConsole", "开启自动猜数.");
     }
 
     private void GuessNumBotCheckBox_Unchecked(object sender, RoutedEventArgs e)
     {
         e.Handled = true;
-        bot.OpenGuessNumberBot = false;
+        botService.OpenGuessNumberBot = false;
         logger.LogInfo("WpfConsole", "关闭自动猜数.");
     }
 
@@ -69,7 +71,7 @@ public partial class MainWindow : Window
         logger.LogInfo("WpfConsole", "开启Client中...");
         try
         {
-            await bot.StartAsync().ConfigureAwait(false);
+            await botService.StartAsync().ConfigureAwait(false);
         }
         catch (ClientException ex)
         {
@@ -85,7 +87,7 @@ public partial class MainWindow : Window
         logger.LogInfo("WpfConsole", "关闭Client中...");
         try
         {
-            await bot.StopAsync().ConfigureAwait(false);
+            await botService.StopAsync().ConfigureAwait(false);
         }
         catch (ClientException ex)
         {
@@ -98,7 +100,7 @@ public partial class MainWindow : Window
     private void FlushLogButton_Click(object sender, RoutedEventArgs e)
     {
         e.Handled = true;
+        App.Current.FlushLogFile();
         logger.LogInfo("WpfConsole", "Flush完成.");
-        App.Current.Cast<App>().streamWriter.Flush();
     }
 }
